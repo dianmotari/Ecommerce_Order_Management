@@ -1,125 +1,524 @@
 -- =========================================================
 -- STRATHMORE UNIVERSITY - DATABASE SYSTEMS
 -- Project: E-Commerce Order Management System (Group Project)
--- Standards: DDL Constraints, DML, Indexes, Views, Aggregations
+-- Run this whole script in MySQL Workbench (lightning bolt).
+-- Demo logins:  admin / Admin123!   alice / Alice123!   brian / Brian123!
+--               cynthia / Cynthia123!   david / David123!   esther / Esther123!
 -- =========================================================
 
--- STEP 1: SCHEMA CREATION & CLEANUP
 CREATE DATABASE IF NOT EXISTS ecommerce_db;
 USE ecommerce_db;
 
-DROP VIEW IF EXISTS Public_Order_Summary_View;
+DROP VIEW  IF EXISTS Order_Line_Detail_View;
+DROP VIEW  IF EXISTS Public_Order_Summary_View;
+DROP TABLE IF EXISTS PASSWORD_RESETS;
 DROP TABLE IF EXISTS ORDER_ITEM;
 DROP TABLE IF EXISTS ORDERS;
 DROP TABLE IF EXISTS PRODUCT;
 DROP TABLE IF EXISTS CUSTOMER;
+DROP TABLE IF EXISTS USERS;
 
--- STEP 2: DDL TABLE DEFINITIONS WITH CONSTRAINTS (Module 5)
+-- 1. AUTHENTICATION
+CREATE TABLE USERS (
+    User_ID       INT AUTO_INCREMENT PRIMARY KEY,
+    Username      VARCHAR(50)  NOT NULL UNIQUE,
+    Email         VARCHAR(100) NOT NULL UNIQUE,
+    Password_Hash VARCHAR(255) NOT NULL,
+    Role          VARCHAR(20)  NOT NULL DEFAULT 'CUSTOMER' CHECK (Role IN ('CUSTOMER','ADMIN')),
+    Created_At    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE PASSWORD_RESETS (
+    Reset_ID     INT AUTO_INCREMENT PRIMARY KEY,
+    User_ID      INT NOT NULL,
+    Reset_Code   VARCHAR(20) NOT NULL,
+    Status       VARCHAR(20) DEFAULT 'PENDING' CHECK (Status IN ('PENDING','APPROVED','REJECTED')),
+    Requested_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT FK_Reset_User_Ecom FOREIGN KEY (User_ID) REFERENCES USERS(User_ID) ON DELETE CASCADE
+);
+
+-- 2. DOMAIN TABLES
 CREATE TABLE CUSTOMER (
-    Customer_ID INT AUTO_INCREMENT PRIMARY KEY,
-    First_Name VARCHAR(50) NOT NULL,
-    Last_Name VARCHAR(50) NOT NULL,
-    Email VARCHAR(100) NOT NULL UNIQUE,
-    Phone_Number VARCHAR(20) NOT NULL,
-    -- Domain constraint on sex/gender matching Module 5 standards
-    Sex CHAR(1) CHECK (Sex IN ('M', 'F'))
+    Customer_ID  INT AUTO_INCREMENT PRIMARY KEY,
+    First_Name   VARCHAR(50)  NOT NULL,
+    Last_Name    VARCHAR(50)  NOT NULL,
+    Email        VARCHAR(100) NOT NULL UNIQUE,
+    Phone_Number VARCHAR(20)  NOT NULL,
+    Sex          CHAR(1) CHECK (Sex IN ('M','F'))
 );
 
 CREATE TABLE PRODUCT (
-    Product_ID INT AUTO_INCREMENT PRIMARY KEY,
-    Product_Name VARCHAR(100) NOT NULL,
-    Category VARCHAR(50) NOT NULL,
-    UnitPrice DECIMAL(10, 2) NOT NULL CHECK (UnitPrice >= 0),
+    Product_ID     INT AUTO_INCREMENT PRIMARY KEY,
+    Product_Name   VARCHAR(100) NOT NULL,
+    Category       VARCHAR(50)  NOT NULL,
+    UnitPrice      DECIMAL(10,2) NOT NULL CHECK (UnitPrice >= 0),
     Stock_Quantity INT NOT NULL DEFAULT 0 CHECK (Stock_Quantity >= 0)
 );
 
+-- Customer_ID is nullable: deleting a customer keeps the order history (ON DELETE SET NULL)
 CREATE TABLE ORDERS (
-    Order_ID INT AUTO_INCREMENT PRIMARY KEY,
-    Customer_ID INT NOT NULL,
-    Order_Date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    Total_Amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00 CHECK (Total_Amount >= 0),
-    Status VARCHAR(20) NOT NULL DEFAULT 'PENDING'
-        CHECK (Status IN ('PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED')),
-    CONSTRAINT FK_Orders_Customer 
-        FOREIGN KEY (Customer_ID) REFERENCES CUSTOMER(Customer_ID)
-        ON DELETE RESTRICT ON UPDATE CASCADE
+    Order_ID     INT AUTO_INCREMENT PRIMARY KEY,
+    Customer_ID  INT NULL,
+    Order_Date   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    Total_Amount DECIMAL(10,2) NOT NULL DEFAULT 0.00 CHECK (Total_Amount >= 0),
+    Status       VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+                 CHECK (Status IN ('PENDING','PROCESSING','SHIPPED','DELIVERED','CANCELLED')),
+    CONSTRAINT FK_Orders_Customer FOREIGN KEY (Customer_ID) REFERENCES CUSTOMER(Customer_ID)
+        ON DELETE SET NULL ON UPDATE CASCADE
 );
 
+-- Bridge table resolving the many-to-many link between ORDERS and PRODUCT
 CREATE TABLE ORDER_ITEM (
     Order_Item_ID INT AUTO_INCREMENT PRIMARY KEY,
-    Order_ID INT NOT NULL,
-    Product_ID INT NOT NULL,
-    Quantity INT NOT NULL CHECK (Quantity > 0),
-    Subtotal DECIMAL(10, 2) NOT NULL CHECK (Subtotal >= 0),
-    CONSTRAINT FK_OrderItem_Order 
-        FOREIGN KEY (Order_ID) REFERENCES ORDERS(Order_ID)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT FK_OrderItem_Product 
-        FOREIGN KEY (Product_ID) REFERENCES PRODUCT(Product_ID)
+    Order_ID      INT NOT NULL,
+    Product_ID    INT NOT NULL,
+    Quantity      INT NOT NULL CHECK (Quantity >= 1 AND Quantity <= 10),
+    Subtotal      DECIMAL(10,2) NOT NULL CHECK (Subtotal >= 0),
+    CONSTRAINT FK_OrderItem_Order   FOREIGN KEY (Order_ID)   REFERENCES ORDERS(Order_ID)
+        ON DELETE CASCADE  ON UPDATE CASCADE,
+    CONSTRAINT FK_OrderItem_Product FOREIGN KEY (Product_ID) REFERENCES PRODUCT(Product_ID)
         ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
--- STEP 3: PERFORMANCE INDEXING (Lab 4 / Module 4)
+-- 3. INDEXES
 CREATE INDEX idx_customer_email ON CUSTOMER(Email);
 CREATE INDEX idx_orders_customer ON ORDERS(Customer_ID);
+CREATE INDEX idx_orderitem_product ON ORDER_ITEM(Product_ID);
 
--- STEP 4: DATA POPULATION / DML INSERTS (Module 6 / Lab 5 & 6)
+-- 4. DATA (100 products, 30 customers, 90 orders; passwords hashed with SHA-256)
+INSERT INTO USERS (Username, Email, Password_Hash, Role) VALUES
+('admin', 'admin@ecommerce.com', SHA2('Admin123!', 256), 'ADMIN'),
+('alice', 'alice.w@example.com', SHA2('Alice123!', 256), 'CUSTOMER'),
+('brian', 'brian.o@example.com', SHA2('Brian123!', 256), 'CUSTOMER'),
+('cynthia', 'cynthia.m@example.com', SHA2('Cynthia123!', 256), 'CUSTOMER'),
+('david', 'david.k@example.com', SHA2('David123!', 256), 'CUSTOMER'),
+('esther', 'esther.n@example.com', SHA2('Esther123!', 256), 'CUSTOMER');
+
 INSERT INTO CUSTOMER (First_Name, Last_Name, Email, Phone_Number, Sex) VALUES
 ('Alice', 'Wanjiku', 'alice.w@example.com', '+254700112233', 'F'),
 ('Brian', 'Ochieng', 'brian.o@example.com', '+254711223344', 'M'),
-('Catherine', 'Moraa', 'catherine.m@example.com', '+254722334455', 'F');
+('Cynthia', 'Mutua', 'cynthia.m@example.com', '+254722334455', 'F'),
+('David', 'Kiptoo', 'david.k@example.com', '+254733445566', 'M'),
+('Esther', 'Njeri', 'esther.n@example.com', '+254744556677', 'F'),
+('Faith', 'Wambui', 'faith.wambui@example.com', '+254705101358', 'F'),
+('George', 'Otieno', 'george.otieno@example.com', '+254703783864', 'M'),
+('Hannah', 'Akinyi', 'hannah.akinyi@example.com', '+254709153468', 'F'),
+('Isaac', 'Mwangi', 'isaac.mwangi@example.com', '+254710960999', 'M'),
+('Joy', 'Chebet', 'joy.chebet@example.com', '+254700096645', 'F'),
+('Kevin', 'Omondi', 'kevin.omondi@example.com', '+254700473149', 'M'),
+('Lucy', 'Wairimu', 'lucy.wairimu@example.com', '+254711977459', 'F'),
+('Martin', 'Kamau', 'martin.kamau@example.com', '+254701639771', 'M'),
+('Naomi', 'Atieno', 'naomi.atieno@example.com', '+254703259876', 'F'),
+('Oscar', 'Mutiso', 'oscar.mutiso@example.com', '+254701651243', 'M'),
+('Purity', 'Njoki', 'purity.njoki@example.com', '+254700788377', 'F'),
+('Quincy', 'Barasa', 'quincy.barasa@example.com', '+254711281580', 'M'),
+('Rose', 'Achieng', 'rose.achieng@example.com', '+254705162278', 'F'),
+('Samuel', 'Kariuki', 'samuel.kariuki@example.com', '+254700328668', 'M'),
+('Tabitha', 'Nyambura', 'tabitha.nyambura@example.com', '+254710723262', 'F'),
+('Victor', 'Rotich', 'victor.rotich@example.com', '+254702572316', 'M'),
+('Winnie', 'Chepkoech', 'winnie.chepkoech@example.com', '+254703495959', 'F'),
+('Xavier', 'Mugo', 'xavier.mugo@example.com', '+254702627191', 'M'),
+('Yvonne', 'Adhiambo', 'yvonne.adhiambo@example.com', '+254711304800', 'F'),
+('Zachary', 'Ndungu', 'zachary.ndungu@example.com', '+254701438072', 'M'),
+('Agnes', 'Wekesa', 'agnes.wekesa@example.com', '+254702980477', 'F'),
+('Brenda', 'Cherono', 'brenda.cherono@example.com', '+254702821494', 'F'),
+('Dennis', 'Kimani', 'dennis.kimani@example.com', '+254704532364', 'M'),
+('Eunice', 'Waweru', 'eunice.waweru@example.com', '+254709409371', 'F'),
+('Felix', 'Owino', 'felix.owino@example.com', '+254702545291', 'M');
 
 INSERT INTO PRODUCT (Product_Name, Category, UnitPrice, Stock_Quantity) VALUES
 ('Laptop Dell XPS', 'Electronics', 120000.00, 15),
-('Wireless Mouse', 'Accessories', 2500.00, 50),
-('USB-C Cable', 'Accessories', 1000.00, 100),
-('Mechanical Keyboard', 'Electronics', 8500.00, 20);
+('Wireless Mouse', 'Accessories', 2500.00, 78),
+('USB-C Cable', 'Accessories', 1000.00, 52),
+('Mechanical Keyboard', 'Electronics', 8500.00, 22),
+('Phone Stand', 'Accessories', 1500.00, 32),
+('Bluetooth Speaker', 'Electronics', 6500.00, 36),
+('Laptop Bag', 'Accessories', 3500.00, 58),
+('Monitor 24 inch', 'Electronics', 18000.00, 34),
+('Samsung Galaxy A15 Smartphone', 'Electronics', 24500.00, 79),
+('iPhone 13 128GB', 'Electronics', 82000.00, 23),
+('HP Pavilion 15 Laptop', 'Electronics', 74500.00, 84),
+('Lenovo IdeaPad 3 Laptop', 'Electronics', 58000.00, 62),
+('Smart TV 43 inch', 'Electronics', 36500.00, 48),
+('Smart TV 55 inch', 'Electronics', 62000.00, 15),
+('Noise Cancelling Headphones', 'Electronics', 14500.00, 54),
+('Wireless Earbuds', 'Electronics', 4800.00, 14),
+('Smartwatch Series 5', 'Electronics', 9800.00, 67),
+('Tablet 10 inch', 'Electronics', 27500.00, 70),
+('Power Bank 20000mAh', 'Electronics', 3200.00, 87),
+('WiFi Router Dual Band', 'Electronics', 5600.00, 31),
+('Digital Camera 24MP', 'Electronics', 45000.00, 65),
+('Portable SSD 1TB', 'Electronics', 11500.00, 33),
+('Gaming Console', 'Electronics', 58000.00, 90),
+('Webcam Full HD', 'Electronics', 4200.00, 59),
+('Ring Light 12 inch', 'Electronics', 2800.00, 58),
+('Printer All-in-One', 'Electronics', 21500.00, 80),
+('Laptop Stand Aluminium', 'Accessories', 2900.00, 40),
+('HDMI Cable 2m', 'Accessories', 900.00, 61),
+('Phone Case Silicone', 'Accessories', 800.00, 3),
+('Screen Protector', 'Accessories', 500.00, 69),
+('Mouse Pad XL', 'Accessories', 1200.00, 68),
+('USB Flash Drive 64GB', 'Accessories', 1100.00, 81),
+('Memory Card 128GB', 'Accessories', 1800.00, 76),
+('Car Phone Holder', 'Accessories', 950.00, 33),
+('Extension Socket 4-way', 'Accessories', 1600.00, 73),
+('Wireless Charger Pad', 'Accessories', 2300.00, 85),
+('Cable Organizer Set', 'Accessories', 600.00, 36),
+('Laptop Cooling Pad', 'Accessories', 2700.00, 76),
+('Non-stick Frying Pan', 'Home & Kitchen', 2400.00, 86),
+('Electric Kettle 1.7L', 'Home & Kitchen', 2900.00, 84),
+('Blender 1.5L', 'Home & Kitchen', 5200.00, 15),
+('Microwave Oven 20L', 'Home & Kitchen', 12800.00, 89),
+('Rice Cooker 1.8L', 'Home & Kitchen', 4600.00, 55),
+('Cutlery Set 24pc', 'Home & Kitchen', 3100.00, 75),
+('Cotton Bedsheet Set', 'Home & Kitchen', 3800.00, 83),
+('Duvet Queen Size', 'Home & Kitchen', 4500.00, 87),
+('LED Table Lamp', 'Home & Kitchen', 1900.00, 88),
+('Modern Wall Clock', 'Home & Kitchen', 1500.00, 25),
+('Storage Containers Set', 'Home & Kitchen', 2200.00, 50),
+('Air Fryer 4L', 'Home & Kitchen', 9500.00, 38),
+('Vacuum Flask 1L', 'Home & Kitchen', 1800.00, 28),
+('Dinner Set 12pc', 'Home & Kitchen', 5400.00, 88),
+('Men Running Sneakers', 'Fashion', 6200.00, 35),
+('Women Leather Handbag', 'Fashion', 4800.00, 16),
+('Men Casual Shirt', 'Fashion', 1800.00, 82),
+('Women Summer Dress', 'Fashion', 2600.00, 40),
+('Denim Jeans', 'Fashion', 3200.00, 83),
+('Hooded Sweatshirt', 'Fashion', 2900.00, 51),
+('Leather Belt', 'Fashion', 1400.00, 37),
+('Sunglasses UV400', 'Fashion', 1900.00, 80),
+('Classic Wrist Watch', 'Fashion', 5400.00, 82),
+('School Backpack 30L', 'Fashion', 3300.00, 54),
+('Body Lotion 400ml', 'Beauty & Care', 750.00, 73),
+('Perfume 100ml', 'Beauty & Care', 3600.00, 61),
+('Hair Dryer 2000W', 'Beauty & Care', 2900.00, 19),
+('Electric Shaver', 'Beauty & Care', 3400.00, 18),
+('Face Wash 150ml', 'Beauty & Care', 650.00, 73),
+('Sunscreen SPF50', 'Beauty & Care', 1250.00, 77),
+('Makeup Kit 24 Colours', 'Beauty & Care', 2800.00, 47),
+('Beard Trimmer', 'Beauty & Care', 2400.00, 59),
+('Football Size 5', 'Sports & Fitness', 1800.00, 11),
+('Yoga Mat 6mm', 'Sports & Fitness', 1900.00, 3),
+('Dumbbell Set 10kg', 'Sports & Fitness', 4200.00, 26),
+('Skipping Rope', 'Sports & Fitness', 600.00, 7),
+('Water Bottle 1L', 'Sports & Fitness', 900.00, 80),
+('Cycling Helmet', 'Sports & Fitness', 3500.00, 88),
+('Resistance Bands Set', 'Sports & Fitness', 1600.00, 18),
+('Gym Gloves', 'Sports & Fitness', 1100.00, 68),
+('A4 Printing Paper Ream', 'Books & Stationery', 750.00, 47),
+('Hardcover Notebook A5', 'Books & Stationery', 450.00, 11),
+('Ballpoint Pens Box of 50', 'Books & Stationery', 700.00, 84),
+('Scientific Calculator', 'Books & Stationery', 1600.00, 81),
+('Highlighters Set of 6', 'Books & Stationery', 400.00, 19),
+('Desk Organizer', 'Books & Stationery', 1100.00, 85),
+('Whiteboard 60x90cm', 'Books & Stationery', 2400.00, 77),
+('Database Systems Textbook', 'Books & Stationery', 4800.00, 26),
+('Basmati Rice 5kg', 'Groceries', 1500.00, 59),
+('Cooking Oil 3L', 'Groceries', 1050.00, 62),
+('Wheat Flour 2kg', 'Groceries', 220.00, 80),
+('Sugar 2kg', 'Groceries', 320.00, 34),
+('Tea Leaves 500g', 'Groceries', 450.00, 78),
+('Ground Coffee 250g', 'Groceries', 750.00, 87),
+('Instant Noodles Carton', 'Groceries', 1250.00, 55),
+('Bottled Water 24 Pack', 'Groceries', 650.00, 17),
+('Building Blocks 500pc', 'Toys & Games', 2600.00, 45),
+('Remote Control Car', 'Toys & Games', 3200.00, 76),
+('Board Game Classic', 'Toys & Games', 3900.00, 83),
+('Stuffed Teddy Bear', 'Toys & Games', 1500.00, 30),
+('Jigsaw Puzzle 1000pc', 'Toys & Games', 1700.00, 56),
+('Kids Art Set', 'Toys & Games', 1300.00, 85);
 
 INSERT INTO ORDERS (Customer_ID, Order_Date, Total_Amount, Status) VALUES
-(1, '2026-03-17 10:00:00', 122500.00, 'PROCESSING'),
-(2, '2026-03-17 11:30:00', 2500.00, 'DELIVERED'),
-(1, '2026-03-18 14:15:00', 8500.00, 'PENDING');
+(1, '2026-07-01 21:14:44', 9000.00, 'SHIPPED'),
+(2, '2026-07-03 15:16:06', 1600.00, 'DELIVERED'),
+(3, '2026-07-04 05:04:19', 12900.00, 'DELIVERED'),
+(4, '2026-07-04 09:23:55', 1950.00, 'DELIVERED'),
+(5, '2026-07-05 04:12:44', 6000.00, 'DELIVERED'),
+(1, '2026-07-06 18:06:22', 3200.00, 'DELIVERED'),
+(2, '2026-07-09 14:16:11', 12750.00, 'CANCELLED'),
+(3, '2026-07-11 19:25:22', 12800.00, 'DELIVERED'),
+(4, '2026-07-11 23:19:41', 10400.00, 'DELIVERED'),
+(5, '2026-07-16 19:50:55', 101300.00, 'DELIVERED'),
+(1, '2026-07-20 12:58:50', 13600.00, 'DELIVERED'),
+(2, '2026-07-20 20:04:57', 20650.00, 'DELIVERED'),
+(1, '2026-07-20 23:40:34', 9300.00, 'DELIVERED'),
+(14, '2026-07-21 05:47:53', 10050.00, 'DELIVERED'),
+(21, '2026-07-21 20:37:08', 900.00, 'DELIVERED'),
+(4, '2026-07-22 06:12:50', 1100.00, 'SHIPPED'),
+(27, '2026-07-22 09:26:12', 3000.00, 'DELIVERED'),
+(5, '2026-07-24 14:51:40', 11700.00, 'DELIVERED'),
+(3, '2026-07-25 10:41:37', 14520.00, 'DELIVERED'),
+(7, '2026-07-25 16:39:52', 6800.00, 'DELIVERED'),
+(29, '2026-07-25 22:33:12', 3900.00, 'SHIPPED'),
+(2, '2026-07-27 13:58:53', 4400.00, 'DELIVERED'),
+(21, '2026-08-01 00:34:43', 2500.00, 'DELIVERED'),
+(29, '2026-08-01 03:20:53', 1600.00, 'CANCELLED'),
+(17, '2026-08-01 21:16:30', 6650.00, 'DELIVERED'),
+(3, '2026-08-02 16:42:34', 2700.00, 'DELIVERED'),
+(4, '2026-08-07 12:11:37', 1900.00, 'DELIVERED'),
+(5, '2026-08-09 21:35:40', 220.00, 'DELIVERED'),
+(16, '2026-08-12 15:13:00', 4600.00, 'DELIVERED'),
+(19, '2026-08-13 10:36:01', 75300.00, 'DELIVERED'),
+(4, '2026-08-14 03:14:22', 17100.00, 'CANCELLED'),
+(20, '2026-08-20 08:22:25', 10500.00, 'DELIVERED'),
+(23, '2026-08-20 23:22:44', 2900.00, 'DELIVERED'),
+(5, '2026-08-21 10:06:24', 11500.00, 'DELIVERED'),
+(13, '2026-08-21 22:48:23', 12800.00, 'DELIVERED'),
+(2, '2026-08-22 12:34:16', 12800.00, 'DELIVERED'),
+(14, '2026-08-22 19:46:24', 1800.00, 'DELIVERED'),
+(28, '2026-08-23 21:15:57', 28240.00, 'DELIVERED'),
+(8, '2026-08-24 18:22:12', 4600.00, 'DELIVERED'),
+(15, '2026-08-26 07:26:17', 15500.00, 'DELIVERED'),
+(21, '2026-08-28 18:12:17', 13100.00, 'DELIVERED'),
+(23, '2026-08-29 08:41:13', 10300.00, 'SHIPPED'),
+(3, '2026-08-29 15:34:48', 9750.00, 'DELIVERED'),
+(28, '2026-08-30 07:07:46', 6800.00, 'SHIPPED'),
+(27, '2026-08-31 15:39:44', 15200.00, 'CANCELLED'),
+(24, '2026-08-31 21:51:20', 1900.00, 'DELIVERED'),
+(7, '2026-09-05 20:24:24', 16900.00, 'DELIVERED'),
+(24, '2026-09-08 22:14:10', 8700.00, 'CANCELLED'),
+(30, '2026-09-09 04:07:04', 9200.00, 'DELIVERED'),
+(14, '2026-09-09 11:01:34', 12700.00, 'DELIVERED'),
+(4, '2026-09-11 10:18:08', 58640.00, 'DELIVERED'),
+(20, '2026-09-11 23:15:40', 4800.00, 'DELIVERED'),
+(17, '2026-09-12 00:56:08', 950.00, 'DELIVERED'),
+(24, '2026-09-12 03:31:20', 25000.00, 'DELIVERED'),
+(28, '2026-09-12 06:13:23', 6900.00, 'DELIVERED'),
+(3, '2026-09-13 17:18:06', 11900.00, 'CANCELLED'),
+(29, '2026-09-15 16:18:48', 750.00, 'DELIVERED'),
+(21, '2026-09-16 03:32:42', 5200.00, 'DELIVERED'),
+(1, '2026-09-16 15:19:27', 440.00, 'DELIVERED'),
+(1, '2026-09-19 07:22:59', 10880.00, 'DELIVERED'),
+(3, '2026-09-23 20:21:53', 3000.00, 'DELIVERED'),
+(13, '2026-09-28 09:52:05', 29800.00, 'SHIPPED'),
+(14, '2026-09-30 02:39:03', 2100.00, 'DELIVERED'),
+(6, '2026-10-01 00:29:01', 24600.00, 'DELIVERED'),
+(29, '2026-10-03 02:35:50', 27700.00, 'DELIVERED'),
+(13, '2026-10-03 03:15:34', 12420.00, 'DELIVERED'),
+(16, '2026-10-04 13:19:02', 5150.00, 'SHIPPED'),
+(2, '2026-10-04 13:39:31', 13000.00, 'DELIVERED'),
+(2, '2026-10-06 23:43:26', 18000.00, 'DELIVERED'),
+(7, '2026-10-06 23:51:26', 9450.00, 'DELIVERED'),
+(5, '2026-10-08 15:11:57', 2200.00, 'DELIVERED'),
+(4, '2026-10-09 23:27:44', 145600.00, 'SHIPPED'),
+(4, '2026-10-12 03:41:01', 14300.00, 'DELIVERED'),
+(15, '2026-10-14 01:34:59', 15600.00, 'DELIVERED'),
+(12, '2026-10-14 11:16:04', 3500.00, 'PROCESSING'),
+(5, '2026-10-15 15:41:31', 4420.00, 'PROCESSING'),
+(2, '2026-10-17 04:49:34', 1100.00, 'DELIVERED'),
+(10, '2026-10-21 17:57:25', 18600.00, 'PENDING'),
+(21, '2026-10-22 01:42:36', 6900.00, 'PENDING'),
+(3, '2026-10-22 05:06:45', 23370.00, 'PROCESSING'),
+(12, '2026-10-22 06:01:13', 24150.00, 'PENDING'),
+(1, '2026-10-22 08:31:56', 600.00, 'PENDING'),
+(4, '2026-10-23 05:39:57', 6500.00, 'PENDING'),
+(4, '2026-10-23 13:12:25', 4800.00, 'PENDING'),
+(7, '2026-10-24 01:11:15', 1600.00, 'PENDING'),
+(3, '2026-10-24 01:50:57', 1600.00, 'PENDING'),
+(17, '2026-10-24 11:20:38', 29400.00, 'PENDING'),
+(21, '2026-10-24 17:04:36', 9100.00, 'PROCESSING'),
+(3, '2026-10-24 21:51:20', 17250.00, 'PROCESSING'),
+(15, '2026-10-24 23:49:08', 6600.00, 'PROCESSING');
 
 INSERT INTO ORDER_ITEM (Order_ID, Product_ID, Quantity, Subtotal) VALUES
-(1, 1, 1, 120000.00),
-(1, 2, 1, 2500.00),
-(2, 2, 1, 2500.00),
-(3, 4, 1, 8500.00);
+(1, 19, 1, 3200.00),
+(1, 40, 2, 5800.00),
+(2, 35, 1, 1600.00),
+(3, 84, 1, 1100.00),
+(3, 52, 2, 10800.00),
+(3, 3, 1, 1000.00),
+(4, 67, 3, 1950.00),
+(5, 73, 1, 4200.00),
+(5, 80, 4, 1800.00),
+(6, 57, 1, 3200.00),
+(7, 78, 3, 3300.00),
+(7, 94, 1, 650.00),
+(7, 49, 4, 8800.00),
+(8, 42, 1, 12800.00),
+(9, 69, 3, 8400.00),
+(9, 3, 2, 2000.00),
+(10, 20, 1, 5600.00),
+(10, 72, 3, 5700.00),
+(10, 21, 2, 90000.00),
+(11, 45, 2, 7600.00),
+(11, 48, 4, 6000.00),
+(12, 29, 4, 3200.00),
+(12, 4, 2, 17000.00),
+(12, 80, 1, 450.00),
+(13, 52, 1, 5400.00),
+(13, 97, 1, 3900.00),
+(14, 97, 2, 7800.00),
+(14, 63, 3, 2250.00),
+(15, 75, 1, 900.00),
+(16, 32, 1, 1100.00),
+(17, 98, 2, 3000.00),
+(18, 47, 2, 3800.00),
+(18, 57, 2, 6400.00),
+(18, 87, 1, 1500.00),
+(19, 96, 4, 12800.00),
+(19, 87, 1, 1500.00),
+(19, 89, 1, 220.00),
+(20, 25, 1, 2800.00),
+(20, 81, 2, 1400.00),
+(20, 100, 2, 2600.00),
+(21, 97, 1, 3900.00),
+(22, 49, 2, 4400.00),
+(23, 30, 2, 1000.00),
+(23, 92, 2, 1500.00),
+(24, 82, 1, 1600.00),
+(25, 45, 1, 3800.00),
+(25, 83, 1, 400.00),
+(25, 84, 1, 1100.00),
+(25, 91, 3, 1350.00),
+(26, 63, 1, 750.00),
+(26, 91, 3, 1350.00),
+(26, 74, 1, 600.00),
+(27, 72, 1, 1900.00),
+(28, 89, 1, 220.00),
+(29, 44, 1, 3100.00),
+(29, 92, 2, 1500.00),
+(30, 69, 1, 2800.00),
+(30, 15, 5, 72500.00),
+(31, 28, 3, 2700.00),
+(31, 54, 3, 14400.00),
+(32, 51, 2, 3600.00),
+(32, 29, 3, 2400.00),
+(32, 87, 3, 4500.00),
+(33, 27, 1, 2900.00),
+(34, 36, 5, 11500.00),
+(35, 42, 1, 12800.00),
+(36, 57, 4, 12800.00),
+(37, 51, 1, 1800.00),
+(38, 89, 2, 440.00),
+(38, 96, 4, 12800.00),
+(38, 77, 3, 4800.00),
+(38, 66, 3, 10200.00),
+(39, 36, 2, 4600.00),
+(40, 89, 5, 1100.00),
+(40, 86, 3, 14400.00),
+(41, 76, 3, 10500.00),
+(41, 95, 1, 2600.00),
+(42, 73, 2, 8400.00),
+(42, 47, 1, 1900.00),
+(43, 95, 1, 2600.00),
+(43, 31, 4, 4800.00),
+(43, 77, 1, 1600.00),
+(43, 79, 1, 750.00),
+(44, 66, 2, 6800.00),
+(45, 44, 2, 6200.00),
+(45, 71, 5, 9000.00),
+(46, 60, 1, 1900.00),
+(47, 58, 4, 11600.00),
+(47, 47, 2, 3800.00),
+(47, 63, 2, 1500.00),
+(48, 80, 2, 900.00),
+(48, 75, 5, 4500.00),
+(48, 62, 1, 3300.00),
+(49, 60, 3, 5700.00),
+(49, 76, 1, 3500.00),
+(50, 83, 4, 1600.00),
+(50, 97, 1, 3900.00),
+(50, 64, 2, 7200.00),
+(51, 90, 2, 640.00),
+(51, 23, 1, 58000.00),
+(52, 77, 3, 4800.00),
+(53, 80, 1, 450.00),
+(53, 30, 1, 500.00),
+(54, 8, 1, 18000.00),
+(54, 76, 2, 7000.00),
+(55, 36, 3, 6900.00),
+(56, 82, 4, 6400.00),
+(56, 78, 5, 5500.00),
+(57, 63, 1, 750.00),
+(58, 41, 1, 5200.00),
+(59, 89, 2, 440.00),
+(60, 90, 4, 1280.00),
+(60, 16, 2, 9600.00),
+(61, 98, 2, 3000.00),
+(62, 80, 2, 900.00),
+(62, 57, 2, 6400.00),
+(62, 46, 5, 22500.00),
+(63, 91, 2, 900.00),
+(63, 31, 1, 1200.00),
+(64, 78, 2, 2200.00),
+(64, 20, 4, 22400.00),
+(65, 4, 2, 17000.00),
+(65, 98, 2, 3000.00),
+(65, 75, 3, 2700.00),
+(65, 93, 4, 5000.00),
+(66, 89, 1, 220.00),
+(66, 60, 2, 3800.00),
+(66, 25, 3, 8400.00),
+(67, 94, 3, 1950.00),
+(67, 77, 2, 3200.00),
+(68, 66, 1, 3400.00),
+(68, 86, 2, 9600.00),
+(69, 64, 5, 18000.00),
+(70, 68, 5, 6250.00),
+(70, 57, 1, 3200.00),
+(71, 49, 1, 2200.00),
+(72, 82, 3, 4800.00),
+(72, 12, 2, 116000.00),
+(72, 71, 1, 1800.00),
+(72, 22, 2, 23000.00),
+(73, 58, 3, 8700.00),
+(73, 34, 4, 3800.00),
+(73, 33, 1, 1800.00),
+(74, 83, 4, 1600.00),
+(74, 69, 5, 14000.00),
+(75, 81, 5, 3500.00),
+(76, 40, 1, 2900.00),
+(76, 83, 3, 1200.00),
+(76, 90, 1, 320.00),
+(77, 32, 1, 1100.00),
+(78, 86, 1, 4800.00),
+(78, 87, 2, 3000.00),
+(78, 52, 2, 10800.00),
+(79, 36, 3, 6900.00),
+(80, 32, 5, 5500.00),
+(80, 89, 1, 220.00),
+(80, 86, 3, 14400.00),
+(80, 67, 5, 3250.00),
+(81, 97, 5, 19500.00),
+(81, 92, 1, 750.00),
+(81, 98, 2, 3000.00),
+(81, 75, 1, 900.00),
+(82, 37, 1, 600.00),
+(83, 81, 2, 1400.00),
+(83, 28, 5, 4500.00),
+(83, 74, 1, 600.00),
+(84, 16, 1, 4800.00),
+(85, 77, 1, 1600.00),
+(86, 83, 4, 1600.00),
+(87, 17, 3, 29400.00),
+(88, 67, 1, 650.00),
+(88, 63, 3, 2250.00),
+(88, 34, 1, 950.00),
+(88, 88, 5, 5250.00),
+(89, 16, 3, 14400.00),
+(89, 79, 3, 2250.00),
+(89, 74, 1, 600.00),
+(90, 33, 2, 3600.00),
+(90, 48, 2, 3000.00);
 
--- STEP 5: SECURE DATA ABSTRACTION / VIEW (Lab 4)
--- Masks exact customer contact details for security
+-- 5. SECURE VIEWS (no email / phone exposed)
 CREATE VIEW Public_Order_Summary_View AS
-SELECT 
-    o.Order_ID,
-    CONCAT(c.First_Name, ' ', c.Last_Name) AS Customer_Name,
-    o.Order_Date,
-    o.Status,
-    o.Total_Amount
+SELECT o.Order_ID, o.Customer_ID,
+       CONCAT(c.First_Name, ' ', c.Last_Name) AS Customer_Name,
+       o.Order_Date, o.Status, o.Total_Amount
 FROM ORDERS o
-JOIN CUSTOMER c ON o.Customer_ID = c.Customer_ID;
+LEFT JOIN CUSTOMER c ON o.Customer_ID = c.Customer_ID;
 
--- STEP 6: DATA INTERROGATION & AGGREGATIONS (Module 7)
--- Query A: Multi-Table JOIN Verification
-SELECT 
-    o.Order_ID,
-    CONCAT(c.First_Name, ' ', c.Last_Name) AS Customer_Name,
-    p.Product_Name,
-    oi.Quantity,
-    oi.Subtotal,
-    o.Status
-FROM ORDERS o
-JOIN CUSTOMER c ON o.Customer_ID = c.Customer_ID
-JOIN ORDER_ITEM oi ON o.Order_ID = oi.Order_ID
+CREATE VIEW Order_Line_Detail_View AS
+SELECT oi.Order_ID, o.Customer_ID, p.Product_Name, p.Category,
+       oi.Quantity, p.UnitPrice, oi.Subtotal
+FROM ORDER_ITEM oi
+JOIN ORDERS  o ON oi.Order_ID   = o.Order_ID
 JOIN PRODUCT p ON oi.Product_ID = p.Product_ID;
 
--- Query B: Summary Statistics (GROUP BY & HAVING)
-SELECT 
-    c.Customer_ID,
-    CONCAT(c.First_Name, ' ', c.Last_Name) AS Customer_Name,
-    COUNT(o.Order_ID) AS Total_Orders,
-    SUM(o.Total_Amount) AS Lifetime_Spend
-FROM CUSTOMER c
-JOIN ORDERS o ON c.Customer_ID = o.Customer_ID
-GROUP BY c.Customer_ID, Customer_Name
-HAVING COUNT(o.Order_ID) >= 1
-ORDER BY Lifetime_Spend DESC;
+-- 6. Quick check
+SELECT 'USERS' AS tbl, COUNT(*) AS n FROM USERS UNION ALL
+SELECT 'CUSTOMER', COUNT(*) FROM CUSTOMER UNION ALL
+SELECT 'PRODUCT', COUNT(*) FROM PRODUCT UNION ALL
+SELECT 'ORDERS', COUNT(*) FROM ORDERS UNION ALL
+SELECT 'ORDER_ITEM', COUNT(*) FROM ORDER_ITEM;
